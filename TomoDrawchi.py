@@ -4,16 +4,16 @@ from PIL import Image, ImageEnhance
 from collections import defaultdict
 
 
-DELAY = 0.1
+DELAY = 0.08
 CANVAS_SIZE = 50
-SATURATION = 3.0
+SATURATION = 3.0 # Anything less than 2.0 does not look good.
 ACCELERATION_BREAK_INTERVAL = 2   # pause every N steps
 ACCELERATION_BREAK_DELAY = 0.3    # how long to pause
 COLOUR_PALLETE_TYPE = ColourPallete.EXT_RANGE
 COLOUR_PALLETE = COLOUR_PALLETE_TYPE.COLOURS
-IMG = "brat.png"
+IMG = "./images/wgia.jpg"
 
-controller = ControllerBackend.Controller(115200, "/dev/cu.usbmodem2121101")
+controller = ControllerBackend.Controller(115200, "/dev/cu.usbmodem101")
 
 cur_x = 0
 cur_y = 0
@@ -65,31 +65,35 @@ def align_cursor():
     while True:
         key = get_key()
 
-        if key == "\x1b[A":        # Up arrow
+        if key == "\x1b[A":          # Up arrow
             controller.UP()
-        elif key == "\x1b[B":      # Down arrow
+        elif key == "\x1b[B":        # Down arrow
             controller.DOWN()
-        elif key == "\x1b[C":      # Right arrow
+        elif key == "\x1b[C":        # Right arrow
             controller.RIGHT()
-        elif key == "\x1b[D":      # Left arrow
+        elif key == "\x1b[D":        # Left arrow
             controller.LEFT()
-        elif key in ("s", "S"):    # A button (Paint / Accept)
+        elif key in ("s", "S"):      # A button (Paint / Accept)
             controller.A()
-        elif key in ("a", "A"):    # B button (Back)
+        elif key in ("a", "A"):      # B button (Back)
             controller.B()
-        elif key in ("w", "W"):    # X button (Tool)
+        elif key in ("w", "W"):      # X button (Tool)
             controller.X()
-        elif key in ("q", "Q"):    # Y button (Colour)
+        elif key in ("q", "Q"):      # Y button (Colour)
             controller.Y()
-        elif key in ("e", "E"):    # L3 (Hide HUD)
+        elif key in ("e", "E"):      # L3 (Hide HUD)
             controller.L3()
-        elif key in ("p", "P"):    # Preview Image
+        elif key in ("1", "-"):      # Minus
+            controller.L3()
+        elif key in ("2", "+", "="): # Plus, primarly for accessing GP2040 web ui
+            controller.L3()
+        elif key in ("p", "P"):      # Preview Image
             pixel_map = load_and_quantize(IMG)
             preview_image(pixel_map)
-        elif key in ("\r", "\n"):  # Enter
+        elif key in ("\r", "\n"):    # Enter
             print("Starting draw...")
             break
-        elif key == "\x03":        # Ctrl+C to cancel
+        elif key == "\x03":          # Ctrl+C to cancel
             print("\nCancelled.")
             sys.exit(0)
 
