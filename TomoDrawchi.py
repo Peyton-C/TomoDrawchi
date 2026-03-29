@@ -4,19 +4,22 @@ from PIL import Image, ImageEnhance
 from collections import defaultdict
 
 
-DELAY = 0.08
+DELAY = 0.05
 CANVAS_SIZE = 50
-SATURATION = 3.0 # Anything less than 2.0 does not look good.
-ACCELERATION_BREAK_INTERVAL = 2   # pause every N steps
-ACCELERATION_BREAK_DELAY = 0.3    # how long to pause
+SATURATION = 2.5 # Anything less than 2.0 does not look good.
+ACCELERATION_BREAK_INTERVAL = 5   # pause every N steps
+ACCELERATION_BREAK_DELAY = 0.1    # how long to pause
+DOMINANT_COLOR_THRESHOLD = 0.10
 COLOUR_PALLETE_TYPE = ColourPallete.EXT_RANGE
 COLOUR_PALLETE = COLOUR_PALLETE_TYPE.COLOURS
-IMG = "./images/wgia.jpg"
+IMG = "./images/brat.png"
 
-controller = ControllerBackend.Controller(115200, "/dev/cu.usbmodem101")
+controller = ControllerBackend.Controller(921600, "/dev/cu.usbmodem101")
 
 cur_x = 0
 cur_y = 0
+cur_tool = "pen"
+hud_visible = True
 
 if COLOUR_PALLETE_TYPE.EXT == False:
     cur_palette_row = 0
@@ -54,10 +57,14 @@ def align_cursor():
     print("=== Align cursor to starting position ===")
     print("  Arrow keys : D-Pad")
     print("  S          : A")
+    print("  9          : Hold A")
+    print("  0          : Release A")
     print("  A          : B")
     print("  W          : X")
     print("  Q          : Y")
     print("  E          : L3")
+    print("  1 / -      : MINUS")
+    print("  2 / = / +  : PLUS")
     print("  P          : Preview Image")
     print("  Enter      : Start drawing")
     print("==========================================")
@@ -75,6 +82,10 @@ def align_cursor():
             controller.LEFT()
         elif key in ("s", "S"):      # A button (Paint / Accept)
             controller.A()
+        elif key in ("9"):      # A button (Paint / Accept)
+            controller.A_HOLD()
+        elif key in ("0"):      # A button (Paint / Accept)
+            controller.A_RELEASE()
         elif key in ("a", "A"):      # B button (Back)
             controller.B()
         elif key in ("w", "W"):      # X button (Tool)
@@ -84,14 +95,15 @@ def align_cursor():
         elif key in ("e", "E"):      # L3 (Hide HUD)
             controller.L3()
         elif key in ("1", "-"):      # Minus
-            controller.L3()
+            controller.MINUS()
         elif key in ("2", "+", "="): # Plus, primarly for accessing GP2040 web ui
-            controller.L3()
+            controller.PLUS()
         elif key in ("p", "P"):      # Preview Image
             pixel_map = load_and_quantize(IMG)
             preview_image(pixel_map)
         elif key in ("\r", "\n"):    # Enter
             print("Starting draw...")
+            controller.A_RELEASE() # just in case A is left held because that would really break shit
             break
         elif key == "\x03":          # Ctrl+C to cancel
             print("\nCancelled.")
@@ -147,8 +159,7 @@ def switch_color(hex_str):
     # Release brush and open colour menu
     controller.A_RELEASE()
     time.sleep(DELAY * 5)
-    controller.L3()
-    time.sleep(DELAY * 5)
+    show_hud()
     controller.Y()  # Enter colour bar
     time.sleep(DELAY * 5)
     controller.Y()  # Enter colour grid
@@ -172,12 +183,48 @@ def switch_color(hex_str):
 
     controller.A()
     time.sleep(DELAY * 5)
-    controller.L3()
-    time.sleep(DELAY * 5)
+    hide_hud()
 
     cur_palette_col = x
     cur_palette_row = y
     print(f"Switched to {hex_str} at x={x}, y={y}")
+
+def switch_to_square():
+    global cur_tool
+    if cur_tool == "square":
+        return
+    show_hud()
+    controller.X()
+    time.sleep(DELAY * 5)
+    controller.LEFT()
+    time.sleep(DELAY)
+    controller.LEFT()
+    time.sleep(DELAY * 5)
+    controller.A()
+    time.sleep(DELAY * 5)
+    controller.A()
+    time.sleep(DELAY * 5)
+    hide_hud()
+    cur_tool = "square"
+    print("Switched to square tool")
+
+def switch_to_pen():
+    global cur_tool
+    if cur_tool == "pen":
+        return
+    time.sleep(1)
+    show_hud()
+    controller.X()
+    time.sleep(DELAY * 5)
+    controller.RIGHT()
+    time.sleep(DELAY)
+    controller.RIGHT()
+    time.sleep(DELAY * 5)
+    controller.A()
+    time.sleep(DELAY * 5)
+    hide_hud()
+    cur_tool = "pen"
+    print("Switched to pen tool")
 
 # Image Processing 
 
@@ -287,8 +334,42 @@ def preview_image(pixel_map):
     preview.show()
 
 # Drawing 
+def show_hud():
+    global hud_visible
+    if not hud_visible:
+        controller.L3()
+        time.sleep(0.5) # Its easier to just manually do this instead of trying to get it from the standard delay
+        hud_visible = True
+
+def hide_hud():
+    global hud_visible
+    if hud_visible:
+        controller.L3()
+        time.sleep(0.5)
+        hud_visible = False
+
+def fill_canvas_with_color(hex_str):
+    global cur_x, cur_y
+    print(f"  Prefilling canvas with dominant color {hex_str}...")
+    switch_color(hex_str)
+    switch_to_square()
+    move_to(0, 0)
+    controller.A_HOLD()
+    time.sleep(DELAY)
+    move_to(CANVAS_SIZE - 1, CANVAS_SIZE - 1)
+    controller.A_RELEASE()
+    time.sleep(DELAY * 3)
+    controller.A()  # Deselect
+    time.sleep(DELAY * 3)
+    # Cursor is dropped at the center of the drawn square
+    cur_x = (CANVAS_SIZE - 1) // 2 + 1
+    cur_y = (CANVAS_SIZE - 1) // 2 + 1
+    switch_to_pen()
+
 def draw_runs(runs):
     global cur_x, cur_y
+    if cur_tool != "pen":
+        switch_to_pen()
     ordered = order_runs_nearest_neighbor(runs)
     for x, y, length, reverse in ordered:
         if reverse:
@@ -322,26 +403,43 @@ def render_image(path):
     for (x, y), hex_str in pixel_map.items():
         by_color[hex_str].append((x, y))
 
+    dominant_hex = max(by_color, key=lambda h: len(by_color[h]))
+    dominant_ratio = len(by_color[dominant_hex]) / len(pixel_map)
+    use_prefill = dominant_ratio >= DOMINANT_COLOR_THRESHOLD
+
     print("Color breakdown:")
     for hex_str in COLOUR_PALLETE_TYPE.flat_colours():
         if hex_str in by_color:
-            print(f"  {hex_str}: {len(by_color[hex_str])} pixels")
+            flag = " <-- prefill" if hex_str == dominant_hex and use_prefill else ""
+            print(f"  {hex_str}: {len(by_color[hex_str])} pixels{flag}")
 
     print("Rendering...")
-    controller.L3()
+    start_time = time.time()
+    hide_hud()
     time.sleep(DELAY)
+
+    if use_prefill:
+        fill_canvas_with_color(dominant_hex)
+
     for hex_str in COLOUR_PALLETE_TYPE.flat_colours():
         if hex_str not in by_color:
+            continue
+        if use_prefill and hex_str == dominant_hex:
+            print(f"  Skipping {hex_str} (prefilled)")
             continue
         print(f"  Drawing {hex_str}...")
         switch_color(hex_str)
         runs = get_runs(by_color[hex_str])
         draw_runs(runs)
 
-    print("Done!")
+    
+    elapsed = time.time() - start_time
+    hours, rem = divmod(elapsed, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print(f"Done! Finished in {int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}")
 
 
 controller.A_RELEASE()
 align_cursor()
 render_image(IMG)
-controller.L3()
+show_hud()

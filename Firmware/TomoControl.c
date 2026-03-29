@@ -4,7 +4,7 @@
 #include "pico/stdlib.h"
 
 #define PIN_COUNT 12
-#define PULSE_MS  50
+#define PULSE_MS  30
 
 const uint pins[PIN_COUNT] = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 
