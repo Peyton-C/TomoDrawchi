@@ -3,19 +3,28 @@ import time, sys, tty, termios
 from PIL import Image, ImageEnhance
 from collections import defaultdict
 
+# Basic Settings
+CANVAS_SIZE = 250
+IMG = "./images/wgia.jpg"
+SERIAL_PORT = "/dev/cu.usbmodem101"
+SERIAL_BAUD = 921600
 
+# Colour Settings
+SATURATION = 1.0 # Anything less than 2.0 does not look good at low res and/or w/ basic pallete 
+DOMINANT_COLOR_THRESHOLD = 0.10
+FORCE_DITHERING = False  # Floyd-Steinberg dithering
+DISABLE_SATURATION_BOOST = False
+COLOUR_PALLETE_TYPE = ColourPallete.EXT_RANGE
+
+# Drawing Settings
 DELAY = 0.05
-CANVAS_SIZE = 50
-SATURATION = 2.5 # Anything less than 2.0 does not look good.
 ACCELERATION_BREAK_INTERVAL = 5   # pause every N steps
 ACCELERATION_BREAK_DELAY = 0.1    # how long to pause
-DOMINANT_COLOR_THRESHOLD = 0.10
-COLOUR_PALLETE_TYPE = ColourPallete.EXT_RANGE
-COLOUR_PALLETE = COLOUR_PALLETE_TYPE.COLOURS
-IMG = "./images/brat.png"
 
-controller = ControllerBackend.Controller(921600, "/dev/cu.usbmodem101")
 
+
+
+controller = ControllerBackend.Controller(SERIAL_BAUD, SERIAL_PORT)
 cur_x = 0
 cur_y = 0
 cur_tool = "pen"
@@ -33,6 +42,17 @@ PALETTE_COLS = max(
     len(entry) if isinstance(entry, tuple) else 1
     for entry in COLOUR_PALLETE_TYPE.COLOURS
 )
+
+# Bellow 100-ish the effect of dithering is negative  
+if CANVAS_SIZE < 100 and FORCE_DITHERING == False:
+    DITHERING = False
+else:
+    DITHERING = True
+
+if CANVAS_SIZE < 100 and SATURATION < 2.0 and DISABLE_SATURATION_BOOST == False:
+    SATURATION += 0.5 # Don't want to keep changing values whenever i switch to small test canvases
+
+COLOUR_PALLETE = COLOUR_PALLETE_TYPE.COLOURS
 
 # Terminal Control
 def get_key():
@@ -257,14 +277,68 @@ def load_and_quantize(path):
     _, _, _, a = img.split()
     img = Image.merge("RGBA", (r, g, b, a))
 
-    pixel_map = {}
+    # Build a float pixel buffer for error diffusion
+    pixels = {}
+    alpha = {}
     for y in range(CANVAS_SIZE):
         for x in range(CANVAS_SIZE):
             px = img.getpixel((x, y))
-            if px[3] < 128:
+            alpha[(x, y)] = px[3]
+            pixels[(x, y)] = [float(px[0]), float(px[1]), float(px[2])]
+
+    # Precompute palette RGB values once for speed
+    palette_entries = [
+        (hex_str, COLOUR_PALLETE_TYPE.hex_to_rgb(hex_str))
+        for hex_str in COLOUR_PALLETE_TYPE.flat_colours()
+    ]
+
+    def nearest_colour_rgb(r, g, b):
+        best_hex, best_dist = None, float("inf")
+        for hex_str, (cr, cg, cb) in palette_entries:
+            dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+            if dist < best_dist:
+                best_dist = dist
+                best_hex = hex_str
+        return best_hex
+
+    pixel_map = {}
+
+    for y in range(CANVAS_SIZE):
+        for x in range(CANVAS_SIZE):
+            if alpha[(x, y)] < 128:
                 continue
-            pixel_map[(x, y)] = nearest_colour(px)  # now stores hex string
-    return pixel_map
+
+            pr, pg, pb = pixels[(x, y)]
+            # Clamp to valid range
+            pr = max(0.0, min(255.0, pr))
+            pg = max(0.0, min(255.0, pg))
+            pb = max(0.0, min(255.0, pb))
+
+            best_hex = nearest_colour_rgb(pr, pg, pb)
+            pixel_map[(x, y)] = best_hex
+
+            if DITHERING:
+                cr, cg, cb = COLOUR_PALLETE_TYPE.hex_to_rgb(best_hex)
+                err_r = pr - cr
+                err_g = pg - cg
+                err_b = pb - cb
+
+                # Floyd-Steinberg error distribution
+                # fmt: off
+                neighbors = [
+                    (x + 1, y,     7 / 16),
+                    (x - 1, y + 1, 3 / 16),
+                    (x,     y + 1, 5 / 16),
+                    (x + 1, y + 1, 1 / 16),
+                ]
+                # fmt: on
+
+                for nx, ny, factor in neighbors:
+                    if 0 <= nx < CANVAS_SIZE and 0 <= ny < CANVAS_SIZE:
+                        if alpha[(nx, ny)] >= 128:
+                            pixels[(nx, ny)][0] += err_r * factor
+                            pixels[(nx, ny)][1] += err_g * factor
+                            pixels[(nx, ny)][2] += err_b * factor
 
     return pixel_map
 
