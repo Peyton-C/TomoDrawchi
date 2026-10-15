@@ -4,10 +4,10 @@ from PIL import Image, ImageEnhance
 from collections import defaultdict
 
 # Basic Settings
-CANVAS_SIZE = 250
+CANVAS_SIZE = 25
 IMG = "./images/wgia.jpg"
-SERIAL_PORT = "/dev/cu.usbmodem101"
-SERIAL_BAUD = 921600
+SERIAL_PORT = "/dev/cu.usbserial-0001"
+SERIAL_BAUD = 115200
 
 # Colour Settings
 SATURATION = 1.0 # Anything less than 2.0 does not look good at low res and/or w/ basic pallete 
@@ -17,7 +17,7 @@ DISABLE_SATURATION_BOOST = False
 COLOUR_PALLETE_TYPE = ColourPallete.EXT_RANGE
 
 # Drawing Settings
-DELAY = 0.05
+DELAY = 0.068
 ACCELERATION_BREAK_INTERVAL = 5   # pause every N steps
 ACCELERATION_BREAK_DELAY = 0.1    # how long to pause
 
